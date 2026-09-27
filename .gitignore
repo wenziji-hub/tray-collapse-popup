@@ -1,0 +1,4 @@
+# 编译产物
+src/schemas/gschemas.compiled
+dist/
+*.zip

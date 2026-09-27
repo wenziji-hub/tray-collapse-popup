@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.tray-collapse"
+          path="/org/gnome/shell/extensions/tray-collapse/">
+
+    <key name="default-collapse" type="b">
+      <default>false</default>
+      <summary>新图标默认收进抽屉</summary>
+      <description>对于尚未在设置里指定过的图标：true=默认收进抽屉，false=默认留在顶栏。</description>
+    </key>
+
+    <key name="pinned-ids" type="as">
+      <default>[]</default>
+      <summary>强制常驻顶栏的图标 id</summary>
+      <description>这些 AppIndicator id 永远留在顶栏，不收进抽屉。</description>
+    </key>
+
+    <key name="collapsed-ids" type="as">
+      <default>[]</default>
+      <summary>强制收进抽屉的图标 id</summary>
+      <description>这些 AppIndicator id 永远收进抽屉。</description>
+    </key>
+
+    <key name="known-indicators" type="s">
+      <default>'[]'</default>
+      <summary>已知图标记录 (JSON)</summary>
+      <description>由扩展进程写入：见过的所有图标 [{id,title}]，供设置界面渲染列表（跨进程桥接）。</description>
+    </key>
+
+    <key name="drawer-spacing" type="i">
+      <default>12</default>
+      <range min="0" max="40"/>
+      <summary>抽屉里图标的间距 (px)</summary>
+      <description>⋯ 展开后，抽屉内各图标之间的水平间距，单位像素。</description>
+    </key>
+
+    <key name="panel-hpadding" type="i">
+      <default>12</default>
+      <range min="0" max="24"/>
+      <summary>顶栏托盘图标的水平内边距 (px)</summary>
+      <description>覆盖主题给每个托盘图标按钮的左右内边距（Yaru 默认 12）。调小即收紧顶栏图标间距；只影响 AppIndicator 托盘图标，不动时钟等系统按钮。</description>
+    </key>
+
+
+    <key name="popup-opacity" type="d">
+      <default>0.9</default>
+      <range min="0.0" max="1.0"/>
+      <summary>弹窗背景不透明度</summary>
+      <description>0=全透明，1=完全不透明。</description>
+    </key>
+
+    <key name="popup-bg-color" type="s">
+      <default>'#2e2e32'</default>
+      <summary>弹窗背景色</summary>
+      <description>形如 #rrggbb 或 rgba(...)。</description>
+    </key>
+
+    <key name="popup-radius" type="i">
+      <default>12</default>
+      <range min="0" max="30"/>
+      <summary>弹窗圆角 (px)</summary>
+    </key>
+
+    <key name="popup-padding" type="i">
+      <default>6</default>
+      <range min="0" max="30"/>
+      <summary>弹窗上下留白 (px)</summary>
+    </key>
+
+  </schema>
+</schemalist>
