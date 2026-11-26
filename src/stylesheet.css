@@ -1,4 +1,4 @@
-/* 顶栏胶囊按钮的悬停 / 激活态。
+/* 面板上的胶囊按钮：悬停 / 激活态。
  * symbolic 图标由 Shell 按前景色重新着色，这里只管按钮背景与图标提亮。 */
 .tray-collapse-button {
     border-radius: 7px;
@@ -14,7 +14,7 @@
     color: #ffffff;
 }
 
-/* 激活：抽屉打开期间常亮（JS 里 toggle 'checked' 伪类），Yaru 橙下划线 */
+/* 激活：弹窗打开期间常亮（JS 里切换 'checked' 伪类），橙色下划线 */
 .tray-collapse-button:checked,
 .tray-collapse-button:active {
     background-color: transparent;
@@ -25,20 +25,16 @@
     color: #ffffff;
 }
 
-/* 备选激活风格（想换就替换上面两条 :checked 规则）：
-   中性提亮: background-color: rgba(255,255,255,0.16);
-   橙色填充: background-color: rgba(233,84,32,0.20);  StIcon { color: #e95420; } */
-
-/* 抽屉里图标之间留点间距，别挤成一坨 */
+/* 弹窗里的图标行；图标间距由设置里的「弹窗内图标间距」用内联 spacing 控制 */
 .tray-collapse-drawer {
     padding: 4px 10px;
-    transition-duration: 200ms;
 }
 
-/* /* POPUP-PATCH */ 自己画的托盘浮层（不用 GNOME 菜单机制，避免抓取冲突） */
+/* 自绘弹窗（不用 GNOME 菜单机制，避免抓取冲突）。
+ * 底色、不透明度、圆角、上下留白来自设置，由 JS 以内联样式覆盖。 */
 .tray-collapse-popup {
-    background-color: rgba(46, 46, 50, 1.0);      /* 完全不透明，别透出后面的窗口 */
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background-color: rgba(46, 46, 50, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 12px;
     padding: 6px 12px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
