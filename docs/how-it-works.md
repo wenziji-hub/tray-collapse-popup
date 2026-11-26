@@ -94,6 +94,20 @@ appindicator 在图标重新就绪（`ready`）时会再调一次 `Panel.addToSt
 所以扩展不能记"这个图标我搬过了"，而是在面板右盒每次 `actor-added` 后（合并到下一帧前执行），
 按图标的**实际父节点和菜单归属**重新校正。校正可以重复执行。
 
+## 5.5 多显示器：每块屏一个胶囊（1.2.0）
+
+`Main.panel` 只在一块显示器上（GNOME 的主显示器，或 Dash to Panel 设置里的「主面板显示器」），
+托盘图标也只挂在它上面。其他显示器的面板是 Dash to Panel 另外建的 standalone 面板。
+
+- 图标只有一份，住在浮层里；浮层不属于任何面板，所以可以弹在任意一块屏上。
+- 每个面板放一个胶囊按钮：主面板用 `Main.panel.addToStatusArea()`；其他面板用
+  Dash to Panel 专门留给其他扩展的 `panel.addToStatusArea()`（见它的 panel.js，
+  注释写着 *needed by other extensions to add elements to the secondary panel*）。
+- Dash to Panel 重建面板（插拔显示器、改面板设置）时会销毁旧面板、发出 `panels-created`；
+  旧胶囊随旧面板一起销毁，收到信号后（等它这一轮初始化做完）给新面板补上胶囊。
+- 它可能比本扩展晚启用，或被关掉再打开，所以同时监听 `extension-state-changed`，
+  `global.dashToPanel` 换了对象就重新连接。
+
 ## 6. 图标身份与 known-indicators
 
 - 收纳名单和 `known-indicators` 用的 id 是 AppIndicator 上报的 `Id`
