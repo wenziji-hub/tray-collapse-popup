@@ -27,6 +27,12 @@
 //
 // 5. 老式 XEmbed 图标（legacy:*）固定留在面板：它们的菜单是应用自己画的
 //    X11 窗口，按图标在面板上的位置弹出，放进浮层会错位。
+//
+// 6. 每块显示器的面板上都有一个胶囊。图标只有一份，住在浮层里；点哪块屏的胶囊，
+//    浮层就弹在哪块屏上。主面板（Main.panel，托盘图标所在）只在一块显示器上，
+//    其他显示器上的面板来自 Dash to Panel：用它专门留给其他扩展的
+//    panel.addToStatusArea() 放胶囊；它重建面板时（插拔显示器、改面板设置）会发
+//    'panels-created'，这里跟着重新放。
 
 const { Clutter, Gio, GLib, GObject, Meta, Shell, St } = imports.gi;
 
@@ -37,6 +43,8 @@ const PopupMenu = imports.ui.popupMenu;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
 
+const ROLE = 'tray-collapse';
+const DASH_TO_PANEL_UUID = 'dash-to-panel@jderose9.github.com';
 const APPINDICATOR_PREFIX = 'appindicator-';
 const AUTO_HIDE_DELAY_MS = 450;   // 鼠标离开浮层多久后自动收起
 const POINTER_POLL_MS = 150;      // 浮层打开期间检查鼠标位置的间隔（收起后不运行）
@@ -212,24 +220,43 @@ var TrayMenuManager = class {
     }
 };
 
-const TrayCollapseButton = GObject.registerClass(
-class TrayCollapseButton extends PanelMenu.Button {
-    _init(settings) {
+// 面板上的胶囊按钮：只负责显示，点击交给 TrayCollapse
+const CapsuleButton = GObject.registerClass(
+class CapsuleButton extends PanelMenu.Button {
+    _init(tray) {
         // dontCreateMenu：胶囊本身没有菜单，左键开关浮层，右键打开设置
         super._init(0.0, 'TrayCollapse', true);
-        this._settings = settings;
+        this._tray = tray;
         this.add_style_class_name('tray-collapse-button');
-
-        // 自带的胶囊 symbolic 图标（-symbolic.svg 会按主题前景色重新着色）
-        this._iconCollapsed = Gio.icon_new_for_string(
-            `${Me.path}/icons/tray-collapse-symbolic.svg`);
-        this._iconExpanded = Gio.icon_new_for_string(
-            `${Me.path}/icons/tray-expand-symbolic.svg`);
         this._icon = new St.Icon({
-            gicon: this._iconCollapsed,
+            gicon: tray.iconCollapsed,
             style_class: 'system-status-icon',
         });
         this.add_child(this._icon);
+        this.connect('button-press-event', (actor, event) => {
+            this._tray.onCapsulePressed(this, event.get_button());
+            return Clutter.EVENT_STOP;
+        });
+    }
+
+    setExpanded(expanded) {
+        this._icon.gicon = expanded ? this._tray.iconExpanded : this._tray.iconCollapsed;
+        if (expanded)
+            this.add_style_pseudo_class('checked');
+        else
+            this.remove_style_pseudo_class('checked');
+    }
+});
+
+var TrayCollapse = class {
+    constructor(settings) {
+        this._settings = settings;
+
+        // 自带的胶囊 symbolic 图标（-symbolic.svg 会按主题前景色重新着色）
+        this.iconCollapsed = Gio.icon_new_for_string(
+            `${Me.path}/icons/tray-collapse-symbolic.svg`);
+        this.iconExpanded = Gio.icon_new_for_string(
+            `${Me.path}/icons/tray-expand-symbolic.svg`);
 
         // 浮层。reactive：点在图标之间的空白处不算「点到外面」
         this._drawer = new St.BoxLayout({ style_class: 'tray-collapse-drawer' });
@@ -246,14 +273,19 @@ class TrayCollapseButton extends PanelMenu.Button {
         });
 
         this._state = 'hidden';       // hidden | shown | hiding
-        this._anchor = null;          // 打开时胶囊的位置，浮层据此定位
+        this._anchorCapsule = null;   // 打开浮层的那个胶囊
+        this._anchor = null;          // 打开时该胶囊的位置，浮层据此定位
         this._pointerWatchId = 0;
         this._outsideSince = 0;
         this._stagePressId = 0;
         this._syncLaterId = 0;
+        this._capsuleLaterId = 0;
         this._destroyed = false;
         this._entries = new Map();    // 浮层里的图标 container -> { indicator, menu, eventId, destroyId }
         this._padded = new Map();     // 改过内边距的图标按钮 -> destroy 信号 id（禁用时还原）
+        this._capsules = new Set();
+        this._dashToPanel = null;     // 当前连接着的 global.dashToPanel
+        this._dashToPanelId = 0;
         this._menuManager = new TrayMenuManager(this);
 
         this._applyPopupStyle();
@@ -276,49 +308,113 @@ class TrayCollapseButton extends PanelMenu.Button {
         Main.overview.connectObject('showing', () => this._hideOverlay(), this);
         Main.layoutManager.connectObject('monitors-changed',
             () => this._hideOverlay({ animate: false }), this);
+        Main.extensionManager.connectObject('extension-state-changed', (manager, extension) => {
+            if (extension.uuid === DASH_TO_PANEL_UUID)
+                this._watchDashToPanel();
+        }, this);
 
-        this.connect('button-press-event', (actor, event) => {
-            if (event.get_button() === Clutter.BUTTON_SECONDARY) {
-                this._hideOverlay();
-                ExtensionUtils.openPrefs();
-            } else {
-                this._toggle();
-            }
-            return Clutter.EVENT_STOP;
-        });
-
+        // 主面板上的胶囊：右侧盒子最靠左，紧挨托盘图标
+        this._primaryCapsule = this._addCapsule(Main.panel);
+        this._watchDashToPanel();
         this._queueSync();
+    }
+
+    // ── 胶囊（每个面板一个）────────────────────────────────────────
+
+    _addCapsule(panel) {
+        const capsule = new CapsuleButton(this);
+        panel.addToStatusArea(ROLE, capsule, 0, 'right');
+        this._capsules.add(capsule);
+        capsule.connect('destroy', () => {
+            this._capsules.delete(capsule);
+            if (this._anchorCapsule === capsule) {
+                this._anchorCapsule = null;
+                if (!this._destroyed)
+                    this._hideOverlay({ animate: false });
+            }
+        });
+        return capsule;
+    }
+
+    // Dash to Panel 可能比本扩展晚启用，或被关掉再打开：跟着它的状态重新连接
+    _watchDashToPanel() {
+        const dashToPanel = global.dashToPanel || null;
+        if (dashToPanel !== this._dashToPanel) {
+            if (this._dashToPanel && this._dashToPanelId)
+                this._dashToPanel.disconnect(this._dashToPanelId);
+            this._dashToPanel = dashToPanel;
+            this._dashToPanelId = dashToPanel
+                ? dashToPanel.connect('panels-created', () => this._queueSecondaryCapsules())
+                : 0;
+        }
+        this._queueSecondaryCapsules();
+    }
+
+    // 'panels-created' 发出时 Dash to Panel 还在初始化面板，等它这一轮做完再放
+    _queueSecondaryCapsules() {
+        if (this._destroyed || this._capsuleLaterId)
+            return;
+        this._capsuleLaterId = Meta.later_add(Meta.LaterType.BEFORE_REDRAW, () => {
+            this._capsuleLaterId = 0;
+            if (!this._destroyed)
+                this._addSecondaryCapsules();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    // 其他显示器上的面板（standalone），各放一个胶囊；旧面板销毁时胶囊随之销毁
+    _addSecondaryCapsules() {
+        for (const dtpPanel of this._dashToPanel?.panels || []) {
+            const panel = dtpPanel.isStandalone ? dtpPanel.panel : null;
+            if (!panel || typeof panel.addToStatusArea !== 'function' ||
+                !panel.statusArea || panel.statusArea[ROLE])
+                continue;
+            try {
+                this._addCapsule(panel);
+            } catch (e) {
+                logError(e, '[tray-collapse] add capsule to secondary panel');
+            }
+        }
+    }
+
+    onCapsulePressed(capsule, button) {
+        if (button === Clutter.BUTTON_SECONDARY) {
+            this._hideOverlay();
+            ExtensionUtils.openPrefs();
+        } else if (this._state === 'shown' && this._anchorCapsule === capsule) {
+            this._hideOverlay();
+        } else {
+            this._showOverlay(capsule);   // 浮层开着时点另一块屏的胶囊：挪过去
+        }
     }
 
     // ── 浮层显示 / 收起 ───────────────────────────────────────────────
 
-    _toggle() {
-        if (this._state === 'shown')
-            this._hideOverlay();
-        else
-            this._showOverlay();
-    }
-
-    _showOverlay() {
-        if (this._state === 'shown')
+    _showOverlay(capsule) {
+        const moving = this._anchorCapsule !== capsule;
+        if (this._state === 'shown' && !moving)
             return;
         const wasHidden = this._state === 'hidden';
         // 先改状态再打断淡出：淡出动画的 onStopped 看到 shown 就不会把浮层藏掉
         this._state = 'shown';
         this._overlay.remove_all_transitions();
+        if (moving) {
+            this._anchorCapsule?.setExpanded(false);
+            this._anchorCapsule = capsule;
+            this._anchor = this._captureAnchor(capsule);
+        }
         if (wasHidden) {
-            this._anchor = this._captureAnchor();
             this._overlay.opacity = 0;
             this._overlay.show();
-            this._positionOverlay();
         }
+        if (wasHidden || moving)
+            this._positionOverlay();
         this._overlay.ease({
             opacity: 255,
             duration: FADE_IN_MS,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
         });
-        this._icon.gicon = this._iconExpanded;
-        this.add_style_pseudo_class('checked');
+        capsule.setExpanded(true);
         this._startPointerWatch();
         this._connectStagePress();
     }
@@ -331,10 +427,10 @@ class TrayCollapseButton extends PanelMenu.Button {
 
         // 浮层里的菜单不能比它的图标活得久，先体面地关掉
         this._menuManager.activeMenu?.close(BoxPointer.PopupAnimation.FADE);
+        this._anchorCapsule?.setExpanded(false);
+        this._anchorCapsule = null;
 
         this._state = 'hiding';
-        this._icon.gicon = this._iconCollapsed;
-        this.remove_style_pseudo_class('checked');
         this._overlay.remove_all_transitions();
         if (!animate) {
             this._finishHide();
@@ -356,10 +452,10 @@ class TrayCollapseButton extends PanelMenu.Button {
         this._state = 'hidden';
     }
 
-    _captureAnchor() {
-        const [x, y] = this.get_transformed_position();
-        const [width, height] = this.get_transformed_size();
-        const monitor = Main.layoutManager.findMonitorForActor(this) ||
+    _captureAnchor(capsule) {
+        const [x, y] = capsule.get_transformed_position();
+        const [width, height] = capsule.get_transformed_size();
+        const monitor = Main.layoutManager.findMonitorForActor(capsule) ||
             Main.layoutManager.primaryMonitor;
         return { x, y, width, height, monitor };
     }
@@ -423,18 +519,26 @@ class TrayCollapseButton extends PanelMenu.Button {
     _pointerNear() {
         const [px, py] = global.get_pointer();
         const near = actor => {
-            if (!actor.mapped)
+            if (!actor || !actor.mapped)
                 return false;
             const [x, y] = actor.get_transformed_position();
             const [w, h] = actor.get_transformed_size();
             return px >= x - POINTER_MARGIN && px <= x + w + POINTER_MARGIN &&
                    py >= y - POINTER_MARGIN && py <= y + h + POINTER_MARGIN;
         };
-        return near(this._overlay) || near(this);
+        return near(this._overlay) || near(this._anchorCapsule);
     }
 
     _isInside(actor) {
-        return !!actor && (this._overlay.contains(actor) || this.contains(actor));
+        if (!actor)
+            return false;
+        if (this._overlay.contains(actor))
+            return true;
+        for (const capsule of this._capsules) {
+            if (capsule.contains(actor))
+                return true;
+        }
+        return false;
     }
 
     // 没有菜单开着时，点到浮层和胶囊以外的地方就收起。
@@ -605,8 +709,9 @@ class TrayCollapseButton extends PanelMenu.Button {
         if (container.get_parent() === this._drawer) {
             this._drawer.remove_child(container);
             const box = Main.panel._rightBox;
-            if (this.container.get_parent() === box)
-                box.insert_child_above(container, this.container);   // 放回胶囊旁边
+            const anchor = this._primaryCapsule?.container;
+            if (anchor && anchor.get_parent() === box)
+                box.insert_child_above(container, anchor);   // 放回主面板胶囊旁边
             else
                 box.insert_child_at_index(container, 0);
         }
@@ -730,17 +835,22 @@ class TrayCollapseButton extends PanelMenu.Button {
 
     // ── 清理 ─────────────────────────────────────────────────────────
 
-    _onDestroy() {
+    destroy() {
         this._destroyed = true;
         // 先断开会触发校正的信号：下面把图标放回面板时也会触发 actor-added
         this._settings.disconnectObject(this);
         Main.panel._rightBox.disconnectObject(this);
         Main.overview.disconnectObject(this);
         Main.layoutManager.disconnectObject(this);
-        if (this._syncLaterId) {
-            Meta.later_remove(this._syncLaterId);
-            this._syncLaterId = 0;
+        Main.extensionManager.disconnectObject(this);
+        if (this._dashToPanel && this._dashToPanelId)
+            this._dashToPanel.disconnect(this._dashToPanelId);
+        this._dashToPanel = null;
+        for (const id of [this._syncLaterId, this._capsuleLaterId]) {
+            if (id)
+                Meta.later_remove(id);
         }
+        this._syncLaterId = this._capsuleLaterId = 0;
         this._stopPointerWatch();
         this._disconnectStagePress();
 
@@ -764,27 +874,27 @@ class TrayCollapseButton extends PanelMenu.Button {
         }
         this._padded.clear();
 
+        for (const capsule of [...this._capsules])
+            capsule.destroy();
+        this._capsules.clear();
+        this._primaryCapsule = null;
+        this._anchorCapsule = null;
+
         Main.layoutManager.removeChrome(this._overlay);
         this._overlay.destroy();
         this._overlay = null;
         this._drawer = null;
-
-        super._onDestroy();
     }
-});
+};
 
 class Extension {
     enable() {
-        this._settings = ExtensionUtils.getSettings();
-        this._button = new TrayCollapseButton(this._settings);
-        // 放在面板右侧盒子最靠左（紧挨托盘图标）
-        Main.panel.addToStatusArea('tray-collapse', this._button, 0, 'right');
+        this._tray = new TrayCollapse(ExtensionUtils.getSettings());
     }
 
     disable() {
-        this._button?.destroy();
-        this._button = null;
-        this._settings = null;
+        this._tray?.destroy();
+        this._tray = null;
     }
 }
 
