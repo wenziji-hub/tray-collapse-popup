@@ -1,11 +1,11 @@
 {
   "uuid": "tray-collapse@fnidore.top",
   "name": "Tray Collapse Popup 托盘折叠",
-  "description": "把 AppIndicator 托盘图标收进一个点开才出现的浮层弹窗（类似 Windows 的溢出区）：淡入淡出、鼠标离开自动收起、外观可视化调节（不透明度/底色/圆角/留白）、右键胶囊打开设置。基于 fnidore/tray-collapse 修改。需要 AppIndicator 扩展。\n\nCollapse AppIndicator tray icons into a floating popup with fade animation, auto-hide on pointer leave, and adjustable appearance. Fork of fnidore/tray-collapse.",
+  "description": "把 AppIndicator 托盘图标收进一个点开才出现的浮层弹窗（类似 Windows 的溢出区）：淡入淡出、鼠标离开自动收起、外观可视化调节（不透明度/底色/圆角/留白）、右键胶囊打开设置。弹窗里的图标菜单用托盘语义（不悬停切换、点另一个图标直接切换）。基于 fnidore/tray-collapse 修改。需要 AppIndicator 扩展。\n\nCollapse AppIndicator tray icons into a floating popup with fade animation, auto-hide on pointer leave, adjustable appearance, and tray-style menu handling. Fork of fnidore/tray-collapse.",
   "shell-version": [
     "42"
   ],
-  "version": 2,
+  "version": 3,
   "settings-schema": "org.gnome.shell.extensions.tray-collapse",
   "url": "https://github.com/wenziji-hub/tray-collapse-popup"
 }
